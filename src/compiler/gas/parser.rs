@@ -1,5 +1,6 @@
 use core::convert::TryFrom;
 use std::collections::HashMap;
+use crate::compiler::memory::stack::Stack;
 
 // EVM Opcode definition(CANCUN)
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -376,7 +377,7 @@ pub enum RiscVInstruction {
 
 // Bytecode Parser
 pub fn parse_bytecode(bytecode: &[u8]) -> Result<Vec<Instruction>, &'static str> {
-    let mut instructions = vec![Instruction::default(), bytecode.len() / 2];
+    let mut instructions = vec![Instruction::default(); bytecode.len() / 2];
     let mut i = 0;
 
     while i < bytecode.len() {
@@ -436,38 +437,39 @@ fn parse_push_operand(bytecode: &[u8], index: &mut usize, size: usize) -> Result
 }
 
 // IR Generator
-pub fn generate_ir(instructions: &[Instruction]) -> Vec<IRInstruction> {
+pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInstruction> {
     let mut ir = Vec::new();
-    let mut stack_top = 0;
 
     for inst in instructions {
         match inst.opcode {
-            Opcode::ADD => {
+            Opcode::ADD | Opcode::SUB | Opcode::MUL | Opcode::DIV | Opcode::MOD => {
+                let op = match inst.opcode {
+                    Opcode::ADD => "add",
+                    Opcode::SUB => "sub",
+                    Opcode::MUL => "mul",
+                    Opcode::DIV => "div",
+                    Opcode::MOD => "mod",
+                    _ => unreachable!(),
+                };
+                let src2 = stack.pop().expect("stack underflow");
+                let src1 = stack.pop().expect("stack underflow");
+                let result = match op {
+                    "add" => src1.wrapping_add(src2),
+                    "sub" => src1.wrapping_sub(src2),
+                    "mul" => src1.wrapping_mul(src2),
+                    "div" => if src2 != 0 { src1 / src2 } else { 0 },
+                    "mod" => if src2 != 0 { src1 % src2 } else { 0 },
+                    _ => unreachable!(),
+                };
+                stack.push(result).expect("");
                 ir.push(IRInstruction::BinaryOp {
-                    op: "add",
-                    dest: stack_top - 1,
-                    src1: stack_top - 1,
-                    src2: stack_top,
+                    op,
+                    dest: stack.len() - 1,
+                    src1: stack.len(),
+                    src2: stack.len() + 1,
                 });
-                stack_top -= 1;
-            }
-            Opcode::PUSH1 => {
-                if let Some(operand) = &inst.operand {
-                    ir.push(IRInstruction::LoadConst {
-                        dest: stack_top,
-                        value: operand.clone(),
-                    });
-                    stack_top += 1;
-                }
-            }
-            Opcode::JUMP => {
-                ir.push(IRInstruction::Jump {
-                    target: stack_top - 1,
-                });
-                stack_top -= 1;
-            }
-            // ... implement other opcodes ...
-            _ => {} // Placeholder for unimplemented opcodes
+            },
+            _ => {}
         }
     }
 

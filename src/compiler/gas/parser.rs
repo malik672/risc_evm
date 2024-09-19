@@ -469,6 +469,44 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInst
                     src2: stack.len() + 1,
                 });
             },
+            Opcode::PUSH1 => {
+                if let Some(operand) = &inst.operand {
+                    let value = operand[0] as u64;
+                    stack.push(value).expect("can't push to stack");
+                    ir.push(IRInstruction::LoadConst {
+                        dest: stack.len(),
+                        value: [value as u8].to_vec(),
+                    });
+                }
+            },
+            Opcode::POP => {
+                stack.pop().expect("");
+                ir.push(IRInstruction::UnaryOp {
+                    op: "pop",
+                    dest: 0,
+                    src: stack.len(),
+                });
+            },
+            Opcode::JUMP => {
+                let target = stack.pop().expect("");
+                ir.push(IRInstruction::Jump {
+                    target: target as usize,
+                });
+            },
+            Opcode::JUMPI => {
+                let condition = stack.pop().expect("");
+                let target = stack.pop().expect("");
+                ir.push(IRInstruction::ConditionalJump {
+                    condition: condition as usize,
+                    target: target as usize,
+                });
+            },
+            Opcode::MLOAD => {
+               //Memory not yet implemented
+            },
+            Opcode::MSTORE => {
+               //Memory not yet implemented 
+            },
             _ => {}
         }
     }
@@ -478,7 +516,7 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInst
 
 // Optimizer
 pub fn optimize_ir(ir: &[IRInstruction]) -> Vec<IRInstruction> {
-    // This is a very basic optimizer that just removes redundant loads
+    // This is a very basic optimizer that just removes redundant loads(complexity incomning)
     let mut optimized = Vec::new();
     let mut last_load: Option<(usize, Vec<u8>)> = None;
 
@@ -542,11 +580,10 @@ pub fn generate_riscv(ir: &[IRInstruction]) -> Vec<RiscVInstruction> {
             }
             IRInstruction::Jump { target } => {
                 if let Some(&label) = label_map.get(target) {
-                    let offset = (label as i32 - i as i32) * 4; // Assuming each instruction is 4 bytes
+                    let offset = (label as i32 - i as i32) * 4;
                     riscv.push(RiscVInstruction::J { offset });
                 }
             }
-            // ... implement other IR instructions ...
             _ => {} // Placeholder for unimplemented instructions
         }
     }
@@ -626,7 +663,7 @@ mod tests {
             },
         ];
 
-        let ir = generate_ir(&instructions);
+        let ir = generate_ir(&instructions,    &mut Stack::new());
 
         assert_eq!(ir.len(), 3);
         match &ir[0] {

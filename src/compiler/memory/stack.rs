@@ -1,17 +1,18 @@
 #![no_std]
 #![no_main]
 
-use core::{f64::NAN, panic::PanicInfo};
+use core:: panic::PanicInfo;
+use crate::MyU256 as U256;
 
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
 const STACK_SIZE: usize = 1024;
-const SENTINEL: u64 = NAN as u64; // Use MAX as a sentinel value
+const SENTINEL: U256 = U256(U256::MAX); // Use MAX as a sentinel value
 
 pub struct Stack {
-    data: [u64; STACK_SIZE],
+    data: [U256; STACK_SIZE],
     top: usize,
 }
 
@@ -23,7 +24,7 @@ impl Stack {
         }
     }
 
-    pub fn push(&mut self, value: u64) -> Result<(), &'static str> {
+    pub fn push(&mut self, value: U256) -> Result<(), &'static str> {
         if self.top < self.data.len() {
             self.data[self.top] = value;
             self.top += 1;
@@ -33,7 +34,7 @@ impl Stack {
         }
     }
 
-    pub fn pop(&mut self) -> Result<u64, &'static str> {
+    pub fn pop(&mut self) -> Result<U256, &'static str> {
         if self.top > 0 {
             self.top -= 1;
             let value = self.data[self.top];
@@ -44,7 +45,7 @@ impl Stack {
         }
     }
 
-    pub fn peek(&self) -> Result<u64, &'static str> {
+    pub fn peek(&self) -> Result<U256, &'static str> {
         if self.top > 0 {
             Ok(self.data[self.top - 1])
         } else {

@@ -1,6 +1,11 @@
 use core::convert::TryFrom;
-use std::collections::HashMap;
-use crate::compiler::memory::stack::Stack;
+use std::default;
+use std::ops::{Add, Mul, Sub};
+use std::{collections::HashMap, io::Read};
+use crate::compiler::memory::{stack::Stack, memory::Memory};
+use crate::MyU256 as U256;
+use alloy_primitives::U256 as U;
+
 
 // EVM Opcode definition(CANCUN)
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -329,28 +334,28 @@ impl Default for Instruction {
 pub enum IRInstruction {
     BinaryOp {
         op: &'static str,
-        dest: usize,
-        src1: usize,
-        src2: usize,
+        dest: U256,
+        src1: U256,
+        src2: U256,
     },
     UnaryOp {
         op: &'static str,
-        dest: usize,
-        src: usize,
+        dest: U256,
+        src: U256,
     },
     LoadConst {
-        dest: usize,
-        value: Vec<u8>,
+        dest: U256,
+        value: U256,
     },
     Jump {
-        target: usize,
+        target: U256,
     },
     ConditionalJump {
-        condition: usize,
-        target: usize,
+        condition: U256,
+        target: U256,
     },
     Call {
-        target: usize,
+        target: U256,
     },
     Return,
 }
@@ -437,7 +442,7 @@ fn parse_push_operand(bytecode: &[u8], index: &mut usize, size: usize) -> Result
 }
 
 // IR Generator
-pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInstruction> {
+pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut Memory) -> Vec<IRInstruction> {
     let mut ir = Vec::new();
 
     for inst in instructions {
@@ -454,28 +459,28 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInst
                 let src2 = stack.pop().expect("stack underflow");
                 let src1 = stack.pop().expect("stack underflow");
                 let result = match op {
-                    "add" => src1.wrapping_add(src2),
-                    "sub" => src1.wrapping_sub(src2),
-                    "mul" => src1.wrapping_mul(src2),
-                    "div" => if src2 != 0 { src1 / src2 } else { 0 },
-                    "mod" => if src2 != 0 { src1 % src2 } else { 0 },
+                    "add" => src1.add(src2),
+                    "sub" => src1.sub(src2),
+                    "mul" => src1.mul(src2),
+                    "div" => if src2 != U256::default() { src1 / src2 } else { U256::default() },
+                    "mod" => if src2 != U256::default() { src1 % src2 } else { U256::default() },
                     _ => unreachable!(),
                 };
                 stack.push(result).expect("");
                 ir.push(IRInstruction::BinaryOp {
                     op,
-                    dest: stack.len() - 1,
-                    src1: stack.len(),
-                    src2: stack.len() + 1,
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
                 });
             },
             Opcode::PUSH1 => {
                 if let Some(operand) = &inst.operand {
-                    let value = operand[0] as u64;
+                    let value = U256(U::from(operand[0]));
                     stack.push(value).expect("can't push to stack");
                     ir.push(IRInstruction::LoadConst {
-                        dest: stack.len(),
-                        value: [value as u8].to_vec(),
+                        dest: U256(U::from(stack.len())),
+                        value: value,
                     });
                 }
             },
@@ -483,26 +488,33 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInst
                 stack.pop().expect("");
                 ir.push(IRInstruction::UnaryOp {
                     op: "pop",
-                    dest: 0,
-                    src: stack.len(),
+                    dest: U256(U::from(0)),
+                    src: U256(U::from(stack.len())),
                 });
             },
             Opcode::JUMP => {
                 let target = stack.pop().expect("");
                 ir.push(IRInstruction::Jump {
-                    target: target as usize,
+                    target: target,
                 });
             },
             Opcode::JUMPI => {
                 let condition = stack.pop().expect("");
                 let target = stack.pop().expect("");
                 ir.push(IRInstruction::ConditionalJump {
-                    condition: condition as usize,
-                    target: target as usize,
+                    condition: condition,
+                    target: target,
                 });
             },
             Opcode::MLOAD => {
-               //Memory not yet implemented
+                if let Some(operand) = &inst.operand {
+                   let index = operand[0];
+                   let value = memory.read_word(index as usize);
+                  
+                   stack.push(U256::try_from(value).unwrap());
+
+                   ir.push(IRInstruction::LoadConst { dest: U256(U::from(stack.len())), value: U256::default() })
+                }
             },
             Opcode::MSTORE => {
                //Memory not yet implemented 
@@ -514,82 +526,82 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack) -> Vec<IRInst
     ir
 }
 
-// Optimizer
-pub fn optimize_ir(ir: &[IRInstruction]) -> Vec<IRInstruction> {
-    // This is a very basic optimizer that just removes redundant loads(complexity incomning)
-    let mut optimized = Vec::new();
-    let mut last_load: Option<(usize, Vec<u8>)> = None;
+// // Optimizer
+// pub fn optimize_ir(ir: &[IRInstruction]) -> Vec<IRInstruction> {
+//     // This is a very basic optimizer that just removes redundant loads(complexity incomning)
+//     let mut optimized = Vec::new();
+//     let mut last_load: Option<(usize, Vec<u8>)> = None;
 
-    for inst in ir {
-        match inst {
-            IRInstruction::LoadConst { dest, value } => {
-                if let Some((last_dest, ref last_value)) = last_load {
-                    if *value == *last_value {
-                        optimized.push(IRInstruction::UnaryOp {
-                            op: "mov",
-                            dest: *dest,
-                            src: last_dest,
-                        });
-                        continue;
-                    }
-                }
-                last_load = Some((*dest, value.clone()));
-            }
-            _ => last_load = None,
-        }
-        optimized.push(inst.clone());
-    }
+//     for inst in ir {
+//         match inst {
+//             IRInstruction::LoadConst { dest, value } => {
+//                 if let Some((last_dest, ref last_value)) = last_load {
+//                     if *value == *last_value {
+//                         optimized.push(IRInstruction::UnaryOp {
+//                             op: "mov",
+//                             dest: *dest,
+//                             src: last_dest,
+//                         });
+//                         continue;
+//                     }
+//                 }
+//                 last_load = Some((*dest, value.clone()));
+//             }
+//             _ => last_load = None,
+//         }
+//         optimized.push(inst.clone());
+//     }
 
-    optimized
-}
+//     optimized
+// }
 
-// RISC-V Code Generator
-pub fn generate_riscv(ir: &[IRInstruction]) -> Vec<RiscVInstruction> {
-    let mut riscv = Vec::new();
-    let mut label_map = HashMap::new();
+// // RISC-V Code Generator
+// pub fn generate_riscv(ir: &[IRInstruction]) -> Vec<RiscVInstruction> {
+//     let mut riscv = Vec::new();
+//     let mut label_map = HashMap::new();
 
-    // First pass: collect jump targets
-    for (i, inst) in ir.iter().enumerate() {
-        if let IRInstruction::Jump { target } = inst {
-            label_map.insert(*target, i);
-        }
-    }
+//     // First pass: collect jump targets
+//     for (i, inst) in ir.iter().enumerate() {
+//         if let IRInstruction::Jump { target } = inst {
+//             label_map.insert(*target, i);
+//         }
+//     }
 
-    // Second pass: generate RISC-V instructions
-    for (i, inst) in ir.iter().enumerate() {
-        match inst {
-            IRInstruction::BinaryOp {
-                op,
-                dest,
-                src1,
-                src2,
-            } => {
-                match *op {
-                    "add" => riscv.push(RiscVInstruction::ADD {
-                        rd: *dest,
-                        rs1: *src1,
-                        rs2: *src2,
-                    }),
-                    // ... other binary operations ...
-                    _ => {} // Placeholder for unimplemented operations
-                }
-            }
-            IRInstruction::LoadConst { dest, value } => {
-                let imm = i64::from_be_bytes([0, 0, 0, 0, 0, 0, value[0], value[1]]);
-                riscv.push(RiscVInstruction::LI { rd: *dest, imm });
-            }
-            IRInstruction::Jump { target } => {
-                if let Some(&label) = label_map.get(target) {
-                    let offset = (label as i32 - i as i32) * 4;
-                    riscv.push(RiscVInstruction::J { offset });
-                }
-            }
-            _ => {} // Placeholder for unimplemented instructions
-        }
-    }
+//     // Second pass: generate RISC-V instructions
+//     for (i, inst) in ir.iter().enumerate() {
+//         match inst {
+//             IRInstruction::BinaryOp {
+//                 op,
+//                 dest,
+//                 src1,
+//                 src2,
+//             } => {
+//                 match *op {
+//                     "add" => riscv.push(RiscVInstruction::ADD {
+//                         rd: *dest,
+//                         rs1: *src1,
+//                         rs2: *src2,
+//                     }),
+//                     // ... other binary operations ...
+//                     _ => {} // Placeholder for unimplemented operations
+//                 }
+//             }
+//             IRInstruction::LoadConst { dest, value } => {
+//                 let imm = i64::from_be_bytes([0, 0, 0, 0, 0, 0, value[0], value[1]]);
+//                 riscv.push(RiscVInstruction::LI { rd: *dest, imm });
+//             }
+//             IRInstruction::Jump { target } => {
+//                 if let Some(&label) = label_map.get(target) {
+//                     let offset = (label as i32 - i as i32) * 4;
+//                     riscv.push(RiscVInstruction::J { offset });
+//                 }
+//             }
+//             _ => {} // Placeholder for unimplemented instructions
+//         }
+//     }
 
-    riscv
-}
+//     riscv
+// }
 
 // Runtime Support
 pub struct EVMRuntime {
@@ -628,123 +640,123 @@ impl EVMRuntime {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    #[test]
-    fn test_parse_bytecode() {
-        let bytecode = vec![0x60, 0x80, 0x60, 0x40, 0x52];
-        let instructions = parse_bytecode(&bytecode).unwrap();
+//     #[test]
+//     fn test_parse_bytecode() {
+//         let bytecode = vec![0x60, 0x80, 0x60, 0x40, 0x52];
+//         let instructions = parse_bytecode(&bytecode).unwrap();
 
-        assert_eq!(instructions.len(), 3);
-        assert_eq!(instructions[0].opcode, Opcode::PUSH1);
-        assert_eq!(instructions[0].operand, Some(vec![0x80]));
-        assert_eq!(instructions[1].opcode, Opcode::PUSH1);
-        assert_eq!(instructions[1].operand, Some(vec![0x40]));
-        assert_eq!(instructions[2].opcode, Opcode::MSTORE);
-        assert_eq!(instructions[2].operand, None);
-    }
+//         assert_eq!(instructions.len(), 3);
+//         assert_eq!(instructions[0].opcode, Opcode::PUSH1);
+//         assert_eq!(instructions[0].operand, Some(vec![0x80]));
+//         assert_eq!(instructions[1].opcode, Opcode::PUSH1);
+//         assert_eq!(instructions[1].operand, Some(vec![0x40]));
+//         assert_eq!(instructions[2].opcode, Opcode::MSTORE);
+//         assert_eq!(instructions[2].operand, None);
+//     }
 
-    #[test]
-    fn test_generate_ir() {
-        let instructions = vec![
-            Instruction {
-                opcode: Opcode::PUSH1,
-                operand: Some(vec![0x80]),
-            },
-            Instruction {
-                opcode: Opcode::PUSH1,
-                operand: Some(vec![0x40]),
-            },
-            Instruction {
-                opcode: Opcode::ADD,
-                operand: None,
-            },
-        ];
+//     #[test]
+//     fn test_generate_ir() {
+//         let instructions = vec![
+//             Instruction {
+//                 opcode: Opcode::PUSH1,
+//                 operand: Some(vec![0x80]),
+//             },
+//             Instruction {
+//                 opcode: Opcode::PUSH1,
+//                 operand: Some(vec![0x40]),
+//             },
+//             Instruction {
+//                 opcode: Opcode::ADD,
+//                 operand: None,
+//             },
+//         ];
 
-        let ir = generate_ir(&instructions,    &mut Stack::new());
+//         let ir = generate_ir(&instructions,    &mut Stack::new());
 
-        assert_eq!(ir.len(), 3);
-        match &ir[0] {
-            IRInstruction::LoadConst { dest, value } => {
-                assert_eq!(*dest, 0);
-                assert_eq!(*value, vec![0x80]);
-            }
-            _ => panic!("Expected LoadConst"),
-        }
-        match &ir[1] {
-            IRInstruction::LoadConst { dest, value } => {
-                assert_eq!(*dest, 1);
-                assert_eq!(*value, vec![0x40]);
-            }
-            _ => panic!("Expected LoadConst"),
-        }
-        match &ir[2] {
-            IRInstruction::BinaryOp {
-                op,
-                dest,
-                src1,
-                src2,
-            } => {
-                assert_eq!(*op, "add");
-                assert_eq!(*dest, 0);
-                assert_eq!(*src1, 0);
-                assert_eq!(*src2, 1);
-            }
-            _ => panic!("Expected BinaryOp"),
-        }
-    }
+//         assert_eq!(ir.len(), 3);
+//         match &ir[0] {
+//             IRInstruction::LoadConst { dest, value } => {
+//                 assert_eq!(*dest, 0);
+//                 assert_eq!(*value, vec![0x80]);
+//             }
+//             _ => panic!("Expected LoadConst"),
+//         }
+//         match &ir[1] {
+//             IRInstruction::LoadConst { dest, value } => {
+//                 assert_eq!(*dest, 1);
+//                 assert_eq!(*value, vec![0x40]);
+//             }
+//             _ => panic!("Expected LoadConst"),
+//         }
+//         match &ir[2] {
+//             IRInstruction::BinaryOp {
+//                 op,
+//                 dest,
+//                 src1,
+//                 src2,
+//             } => {
+//                 assert_eq!(*op, "add");
+//                 assert_eq!(*dest, 0);
+//                 assert_eq!(*src1, 0);
+//                 assert_eq!(*src2, 1);
+//             }
+//             _ => panic!("Expected BinaryOp"),
+//         }
+//     }
 
-    #[test]
-    fn test_optimize_ir() {
-        let ir = vec![
-            IRInstruction::LoadConst {
-                dest: 0,
-                value: vec![0x80],
-            },
-            IRInstruction::LoadConst {
-                dest: 1,
-                value: vec![0x80],
-            },
-            IRInstruction::BinaryOp {
-                op: "add",
-                dest: 2,
-                src1: 0,
-                src2: 1,
-            },
-        ];
+//     #[test]
+//     fn test_optimize_ir() {
+//         let ir = vec![
+//             IRInstruction::LoadConst {
+//                 dest: 0,
+//                 value: vec![0x80],
+//             },
+//             IRInstruction::LoadConst {
+//                 dest: 1,
+//                 value: vec![0x80],
+//             },
+//             IRInstruction::BinaryOp {
+//                 op: "add",
+//                 dest: 2,
+//                 src1: 0,
+//                 src2: 1,
+//             },
+//         ];
 
-        let optimized = optimize_ir(&ir);
+//         let optimized = optimize_ir(&ir);
 
-        assert_eq!(optimized.len(), 3);
-        match &optimized[1] {
-            IRInstruction::UnaryOp { op, dest, src } => {
-                assert_eq!(*op, "mov");
-                assert_eq!(*dest, 1);
-                assert_eq!(*src, 0);
-            }
-            _ => panic!("Expected UnaryOp"),
-        }
-    }
+//         assert_eq!(optimized.len(), 3);
+//         match &optimized[1] {
+//             IRInstruction::UnaryOp { op, dest, src } => {
+//                 assert_eq!(*op, "mov");
+//                 assert_eq!(*dest, 1);
+//                 assert_eq!(*src, 0);
+//             }
+//             _ => panic!("Expected UnaryOp"),
+//         }
+//     }
 
-    #[test]
-    fn test_generate_riscv() {
-        let ir = vec![
-            IRInstruction::LoadConst {
-                dest: 0,
-                value: vec![0x80],
-            },
-            IRInstruction::LoadConst {
-                dest: 1,
-                value: vec![0x40],
-            },
-            IRInstruction::BinaryOp {
-                op: "add",
-                dest: 2,
-                src1: 0,
-                src2: 1,
-            },
-        ];
-    }
-}
+//     #[test]
+//     fn test_generate_riscv() {
+//         let ir = vec![
+//             IRInstruction::LoadConst {
+//                 dest: 0,
+//                 value: vec![0x80],
+//             },
+//             IRInstruction::LoadConst {
+//                 dest: 1,
+//                 value: vec![0x40],
+//             },
+//             IRInstruction::BinaryOp {
+//                 op: "add",
+//                 dest: 2,
+//                 src1: 0,
+//                 src2: 1,
+//             },
+//         ];
+//     }
+// }

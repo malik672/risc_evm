@@ -1,12 +1,4 @@
-#![no_std]
-#![no_main]
-
-use core:: panic::PanicInfo;
 use crate::MyU256 as U256;
-
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
-}
 
 const STACK_SIZE: usize = 1024;
 const SENTINEL: U256 = U256(U256::MAX); // Use MAX as a sentinel value

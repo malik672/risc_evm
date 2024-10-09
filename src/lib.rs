@@ -1,3 +1,6 @@
+
+#![feature(integer_sign_cast)]
+
 pub mod compiler;
 
 use core::fmt;
@@ -56,7 +59,6 @@ impl Div for MyU256 {
     }
 }
 
-
 // Display implementation for easy printing
 impl fmt::Display for MyU256 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -76,7 +78,66 @@ impl Rem for MyU256 {
     }
 }
 
-
 impl MyU256 {
     pub const MAX: U256 = U256::MAX;
+
+    fn u256_to_usize(bytes: [u8; 32]) -> usize {
+        let mut result = 0usize;
+        for &byte in bytes.iter().rev().take(8) {
+            result = (result << 8) | (byte as usize);
+        }
+        result
+    }
+
+    pub fn to_be_bytes(&self) -> [u8; 32] {
+        self.0.to_be_bytes()
+    }
+
+    pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
+        MyU256(U256::from_be_bytes(bytes))
+    }
+
+    pub fn as_usize(&self) -> usize {
+        let bytes = self.0.to_be_bytes();
+        Self::u256_to_usize(bytes)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+struct i256(U256);
+
+impl i256 {
+   pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
+        i256(U256::from_be_bytes(bytes))
+    }
+
+    pub fn to_be_bytes(&self) -> [u8; 32] {
+        self.0.to_be_bytes()
+    }
+
+    pub fn abs(&self) -> Self {
+        if self.is_negative() {
+            i256((!self.0).overflowing_add(U256::from(1)).0)
+        } else {
+            self.clone()
+        }
+    }
+
+    pub fn is_negative(&self) -> bool {
+        self.0.bit(255)
+    }
+}
+
+impl Rem for i256 {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        // This is a simplified version and may not handle all edge cases(so faulty)
+        let a = self.0;
+        let b = rhs.0;
+        let r = a % b;
+        let sign = if self.is_negative() ^ rhs.is_negative() { -1 } else { 1 };
+        // i256(r * sign);
+        todo!()
+    }
 }

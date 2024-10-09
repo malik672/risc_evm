@@ -1,11 +1,10 @@
+use crate::compiler::memory::{memory::Memory, stack::Stack};
+use crate::MyU256 as U256;
+use alloy_primitives::U256 as U;
 use core::convert::TryFrom;
 use std::default;
 use std::ops::{Add, Mul, Sub};
 use std::{collections::HashMap, io::Read};
-use crate::compiler::memory::{stack::Stack, memory::Memory};
-use crate::MyU256 as U256;
-use alloy_primitives::U256 as U;
-
 
 // EVM Opcode definition(CANCUN)
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -141,7 +140,7 @@ pub enum Opcode {
     LOG1,
     LOG2,
     LOG3,
-    LOG4,	
+    LOG4,
     PREVRANDAO,
     CREATE,
     CALL,
@@ -325,7 +324,10 @@ pub struct Instruction {
 
 impl Default for Instruction {
     fn default() -> Self {
-        Self { opcode: Opcode::STOP, operand: Default::default() }
+        Self {
+            opcode: Opcode::STOP,
+            operand: Default::default(),
+        }
     }
 }
 
@@ -347,6 +349,14 @@ pub enum IRInstruction {
         dest: U256,
         value: U256,
     },
+    MemoryLoad {
+        offset: U256,
+        dest: U256,
+    },
+    MemoryStore {
+        offset: U256,
+        value: U256,
+    },
     Jump {
         target: U256,
     },
@@ -357,6 +367,7 @@ pub enum IRInstruction {
     Call {
         target: U256,
     },
+    Stop,
     Return,
 }
 
@@ -431,7 +442,11 @@ pub fn parse_bytecode(bytecode: &[u8]) -> Result<Vec<Instruction>, &'static str>
     Ok(instructions)
 }
 
-fn parse_push_operand(bytecode: &[u8], index: &mut usize, size: usize) -> Result<Option<Vec<u8>>, &'static str> {
+fn parse_push_operand(
+    bytecode: &[u8],
+    index: &mut usize,
+    size: usize,
+) -> Result<Option<Vec<u8>>, &'static str> {
     if *index + size <= bytecode.len() {
         let operand = bytecode[*index..*index + size].to_vec();
         *index += size;
@@ -442,11 +457,19 @@ fn parse_push_operand(bytecode: &[u8], index: &mut usize, size: usize) -> Result
 }
 
 // IR Generator
-pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut Memory) -> Vec<IRInstruction> {
+pub fn generate_ir(
+    instructions: &[Instruction],
+    stack: &mut Stack,
+    memory: &mut Memory,
+) -> Vec<IRInstruction> {
     let mut ir = Vec::new();
 
     for inst in instructions {
         match inst.opcode {
+            Opcode::STOP => {
+                ir.push(IRInstruction::Stop);
+                break; 
+            },
             Opcode::ADD | Opcode::SUB | Opcode::MUL | Opcode::DIV | Opcode::MOD => {
                 let op = match inst.opcode {
                     Opcode::ADD => "add",
@@ -462,16 +485,49 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
                     "add" => src1.add(src2),
                     "sub" => src1.sub(src2),
                     "mul" => src1.mul(src2),
-                    "div" => if src2 != U256::default() { src1 / src2 } else { U256::default() },
-                    "mod" => if src2 != U256::default() { src1 % src2 } else { U256::default() },
+                    "div" => {
+                        if src2 != U256::default() {
+                            src1 / src2
+                        } else {
+                            U256::default()
+                        }
+                    }
+                    "mod" => {
+                        if src2 != U256::default() {
+                            src1 % src2
+                        } else {
+                            U256::default()
+                        }
+                    }
                     _ => unreachable!(),
                 };
                 stack.push(result).expect("");
                 ir.push(IRInstruction::BinaryOp {
                     op,
-                    dest: U256(U::from(stack.len() - 1)),
+                    dest: U256(U::from(stack.len())),
                     src1: U256(U::from(stack.len())),
-                    src2: U256(U::from(stack.len() + 1)),
+                    src2: U256(U::from(stack.len())),
+                });
+            },
+            Opcode::SMOD => {
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = if b.0.is_zero() {
+                    U256::default()
+                } else {
+                    // Convert to i256 for signed operations
+                    let a_i256 = a.as_usize().cast_signed() as i64;
+                    let b_i256 = a.as_usize().cast_signed() as i64;
+                    let r = a_i256.abs() % b_i256.abs();
+                    let result_i256 = if a_i256.is_negative() { -r } else { r };
+                    U256(U::from(result_i256 as u64))
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "smod",
+                    dest: U256(U::from(stack.len())),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len())),
                 });
             },
             Opcode::PUSH1 => {
@@ -483,7 +539,7 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
                         value: value,
                     });
                 }
-            },
+            }
             Opcode::POP => {
                 stack.pop().expect("");
                 ir.push(IRInstruction::UnaryOp {
@@ -491,13 +547,11 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
                     dest: U256(U::from(0)),
                     src: U256(U::from(stack.len())),
                 });
-            },
+            }
             Opcode::JUMP => {
                 let target = stack.pop().expect("");
-                ir.push(IRInstruction::Jump {
-                    target: target,
-                });
-            },
+                ir.push(IRInstruction::Jump { target: target });
+            }
             Opcode::JUMPI => {
                 let condition = stack.pop().expect("");
                 let target = stack.pop().expect("");
@@ -505,19 +559,30 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
                     condition: condition,
                     target: target,
                 });
-            },
+            }
             Opcode::MLOAD => {
-                if let Some(operand) = &inst.operand {
-                   let index = operand[0];
-                   let value = memory.read_word(index as usize);
-                  
-                   stack.push(U256::try_from(value).unwrap());
+                let index = stack.pop().expect("Stack underflow");
+                let value = memory.read_word(index.as_usize());
 
-                   ir.push(IRInstruction::LoadConst { dest: U256(U::from(stack.len())), value: U256::default() })
-                }
-            },
+                let _ = stack.push(U256::try_from(value).unwrap());
+
+                ir.push(IRInstruction::MemoryLoad {
+                    offset: U256(U::from(stack.len())),
+                    dest: U256::default(),
+                })
+            }
             Opcode::MSTORE => {
-               //Memory not yet implemented 
+                let offset = stack.pop().expect("Stack underflow");
+                let value = stack.pop().expect("Stack underflow");
+
+                memory.write_word(offset.as_usize(), value.to_be_bytes());
+ 
+                
+                ir.push(IRInstruction::MemoryStore {
+                    offset: U256(U::from(stack.len())),
+                    value: U256::default(),
+                })
+
             },
             _ => {}
         }

@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 alloy-primitives = "0.8.3"
 riscv = "0.10.1"
+once_cell = "1.20.2"
+primitives = { git = "https://github.com/malik672/Primitives.git" }
+
+
 
 [profile.dev]
 panic = "abort"

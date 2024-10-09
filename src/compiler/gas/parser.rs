@@ -2,9 +2,7 @@ use crate::compiler::memory::{memory::Memory, stack::Stack};
 use crate::MyU256 as U256;
 use alloy_primitives::U256 as U;
 use core::convert::TryFrom;
-use std::default;
 use std::ops::{Add, Mul, Sub};
-use std::{collections::HashMap, io::Read};
 
 // EVM Opcode definition(CANCUN)
 #[derive(Debug, PartialEq, Clone, Copy)]

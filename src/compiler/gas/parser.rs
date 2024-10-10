@@ -1,5 +1,5 @@
 use crate::compiler::memory::{memory::Memory, stack::Stack};
-use crate::MyU256 as U256;
+use crate::{MyU256 as U256, I256};
 use alloy_primitives::U256 as U;
 use core::convert::TryFrom;
 use std::ops::{Add, Mul, Sub};
@@ -343,6 +343,13 @@ pub enum IRInstruction {
         dest: U256,
         src: U256,
     },
+    TernaryOp {
+        op: &'static str,
+        dest: U256,
+        src1: U256,
+        src2: U256,
+        src3: U256,
+    },
     LoadConst {
         dest: U256,
         value: U256,
@@ -466,8 +473,8 @@ pub fn generate_ir(
         match inst.opcode {
             Opcode::STOP => {
                 ir.push(IRInstruction::Stop);
-                break; 
-            },
+                break;
+            }
             Opcode::ADD | Opcode::SUB | Opcode::MUL | Opcode::DIV | Opcode::MOD => {
                 let op = match inst.opcode {
                     Opcode::ADD => "add",
@@ -506,19 +513,17 @@ pub fn generate_ir(
                     src1: U256(U::from(stack.len())),
                     src2: U256(U::from(stack.len())),
                 });
-            },
+            }
             Opcode::SMOD => {
                 let b = stack.pop().expect("Stack underflow");
                 let a = stack.pop().expect("Stack underflow");
                 let result = if b.0.is_zero() {
                     U256::default()
                 } else {
-                    // Convert to i256 for signed operations
-                    let a_i256 = a.as_usize().cast_signed() as i64;
-                    let b_i256 = a.as_usize().cast_signed() as i64;
-                    let r = a_i256.abs() % b_i256.abs();
-                    let result_i256 = if a_i256.is_negative() { -r } else { r };
-                    U256(U::from(result_i256 as u64))
+                    let a_i256 = I256(a.0);
+                    let b_i256 = I256(b.0);
+                    let r = a_i256 % b_i256;
+                    U256(r.0)
                 };
                 stack.push(result).expect("Stack overflow");
                 ir.push(IRInstruction::BinaryOp {
@@ -527,7 +532,131 @@ pub fn generate_ir(
                     src1: U256(U::from(stack.len())),
                     src2: U256(U::from(stack.len())),
                 });
-            },
+            }
+            Opcode::ADDMOD => {
+                let n = stack.pop().expect("Stack underflow");
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = if n.0.is_zero() {
+                    U256::default()
+                } else {
+                    let sum = a.0.overflowing_add(b.0).0;
+                    U256(sum % n.0)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::TernaryOp {
+                    op: "addmod",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                    src3: U256(U::from(stack.len() + 2)),
+                });
+            }
+            Opcode::MULMOD => {
+                let n = stack.pop().expect("Stack underflow");
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = if n.0.is_zero() {
+                    U256::default()
+                } else {
+                    let product = a.0.overflowing_mul(b.0).0;
+                    U256(product % n.0)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::TernaryOp {
+                    op: "mulmod",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                    src3: U256(U::from(stack.len() + 2)),
+                });
+            }
+            Opcode::EXP => {
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = U256(a.0.overflowing_pow(b.0).0);
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "exp",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::SIGNEXTEND => {}
+            Opcode::LT | Opcode::GT | Opcode::SLT | Opcode::SGT | Opcode::EQ => {
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let ops;
+                let result = match inst.opcode {
+                    Opcode::LT => {
+                        ops = "LT";
+                        U256(U::from(a.0 < b.0))
+                    }
+                    Opcode::GT => {
+                        ops = "GT";
+                        U256(U::from(a.0 > b.0))
+                    }
+                    Opcode::SLT => {
+                        ops = "SLT";
+                        let a_i256 = I256(a.0);
+                        let b_i256 = I256(b.0);
+                        U256(U::from(a_i256 < b_i256))
+                    }
+                    Opcode::SGT => {
+                        ops = "SGT";
+                        let a_i256 = I256(a.0);
+                        let b_i256 = I256(b.0);
+                        U256(U::from(a_i256 > b_i256))
+                    }
+                    Opcode::EQ => {
+                        ops = "EQ";
+                        U256(U::from(a.0 == b.0))
+                    }
+                    _ => unreachable!(),
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: ops,
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::NOT => {
+                let a = stack.pop().expect("Stack underflow");
+                let result = U256(!a.0);
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::UnaryOp {
+                    op: "not",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src: U256(U::from(stack.len())),
+                });
+            }
+
+            Opcode::BYTE => {
+                let i = stack.pop().expect("Stack underflow");
+                let x = stack.pop().expect("Stack underflow");
+                let result = if i.0 >= U::from(32) {
+                    U256::default()
+                } else {
+                    let byte = (x.0 >> (U::from(8) * (U::from(31) - i.0))) & U::from(0xFF);
+                    U256(byte)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "byte",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::SHA3 => {
+                let offset = stack.pop().expect("Stack underflow");
+                let size = stack.pop().expect("Stack underflow");
+        
+         
+            }
             Opcode::PUSH1 => {
                 if let Some(operand) = &inst.operand {
                     let value = U256(U::from(operand[0]));
@@ -574,14 +703,12 @@ pub fn generate_ir(
                 let value = stack.pop().expect("Stack underflow");
 
                 memory.write_word(offset.as_usize(), value.to_be_bytes());
- 
-                
+
                 ir.push(IRInstruction::MemoryStore {
                     offset: U256(U::from(stack.len())),
                     value: U256::default(),
                 })
-
-            },
+            }
             _ => {}
         }
     }

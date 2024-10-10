@@ -1,4 +1,3 @@
-
 #![feature(integer_sign_cast)]
 
 pub mod compiler;
@@ -12,7 +11,7 @@ use alloy_primitives::{ruint::ToUintError, U256};
 pub struct MyU256(U256);
 
 impl TryFrom<[u8; 32]> for MyU256 {
-    type Error = ToUintError<U256>; // Define an appropriate error type
+    type Error = ToUintError<U256>; 
 
     fn try_from(value: [u8; 32]) -> Result<Self, Self::Error> {
         let mut result = U256::default();
@@ -59,7 +58,7 @@ impl Div for MyU256 {
     }
 }
 
-// Display implementation for easy printing
+
 impl fmt::Display for MyU256 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -104,11 +103,11 @@ impl MyU256 {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
-struct i256(U256);
+pub struct I256(U256);
 
-impl i256 {
-   pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
-        i256(U256::from_be_bytes(bytes))
+impl I256 {
+    pub fn from_be_bytes(bytes: [u8; 32]) -> Self {
+        I256(U256::from_be_bytes(bytes))
     }
 
     pub fn to_be_bytes(&self) -> [u8; 32] {
@@ -117,9 +116,9 @@ impl i256 {
 
     pub fn abs(&self) -> Self {
         if self.is_negative() {
-            i256((!self.0).overflowing_add(U256::from(1)).0)
+            I256((!self.0).overflowing_add(U256::from(1)).0)
         } else {
-            self.clone()
+            *self
         }
     }
 
@@ -128,7 +127,7 @@ impl i256 {
     }
 }
 
-impl Rem for i256 {
+impl Rem for I256 {
     type Output = Self;
 
     fn rem(self, rhs: Self) -> Self::Output {
@@ -136,8 +135,24 @@ impl Rem for i256 {
         let a = self.0;
         let b = rhs.0;
         let r = a % b;
-        let sign = if self.is_negative() ^ rhs.is_negative() { -1 } else { 1 };
-        // i256(r * sign);
+        let sign = if self.is_negative() ^ rhs.is_negative() {
+            -1
+        } else {
+            1
+        };
+        // I256(r * sign);
         todo!()
+    }
+}
+
+impl PartialOrd for I256 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.is_negative() && !other.is_negative() {
+            Some(std::cmp::Ordering::Less)
+        } else if !self.is_negative() && other.is_negative() {
+            Some(std::cmp::Ordering::Greater)
+        } else {
+            self.0.partial_cmp(&other.0)
+        }
     }
 }

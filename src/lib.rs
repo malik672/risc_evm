@@ -1,6 +1,7 @@
 #![feature(integer_sign_cast)]
 
 pub mod compiler;
+pub mod primitives;
 
 use core::fmt;
 use std::ops::{Add, Div, Mul, Rem, Sub};

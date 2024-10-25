@@ -1,4 +1,4 @@
-// The following function is adapted from the revm codebase:
+// The following MODULE is adapted from the revm codebase:
 // https://github.com/bluealloy/revm/tree/main/crates/revm/src
 
 #![allow(non_camel_case_types)]
@@ -114,18 +114,6 @@ impl From<&str> for SpecId {
             "Cancun" => Self::CANCUN,
             "Prague" => Self::PRAGUE,
             "PragueEOF" => Self::PRAGUE_EOF,
-            #[cfg(feature = "optimism")]
-            "Bedrock" => SpecId::BEDROCK,
-            #[cfg(feature = "optimism")]
-            "Regolith" => SpecId::REGOLITH,
-            #[cfg(feature = "optimism")]
-            "Canyon" => SpecId::CANYON,
-            #[cfg(feature = "optimism")]
-            "Ecotone" => SpecId::ECOTONE,
-            #[cfg(feature = "optimism")]
-            "Fjord" => SpecId::FJORD,
-            #[cfg(feature = "optimism")]
-            "Granite" => SpecId::GRANITE,
             _ => Self::LATEST,
         }
     }
@@ -154,18 +142,6 @@ impl From<SpecId> for &'static str {
             SpecId::CANCUN => "Cancun",
             SpecId::PRAGUE => "Prague",
             SpecId::PRAGUE_EOF => "PragueEOF",
-            #[cfg(feature = "optimism")]
-            SpecId::BEDROCK => "Bedrock",
-            #[cfg(feature = "optimism")]
-            SpecId::REGOLITH => "Regolith",
-            #[cfg(feature = "optimism")]
-            SpecId::CANYON => "Canyon",
-            #[cfg(feature = "optimism")]
-            SpecId::ECOTONE => "Ecotone",
-            #[cfg(feature = "optimism")]
-            SpecId::FJORD => "Fjord",
-            #[cfg(feature = "optimism")]
-            SpecId::GRANITE => "Granite",
             SpecId::LATEST => "Latest",
         }
     }

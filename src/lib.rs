@@ -8,7 +8,7 @@ use std::ops::{Add, Div, Mul, Rem, Sub};
 
 use alloy_primitives::{ruint::ToUintError, U256};
 
-#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default, Eq, Hash)]
 pub struct MyU256(U256);
 
 impl TryFrom<[u8; 32]> for MyU256 {

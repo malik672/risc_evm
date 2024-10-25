@@ -9,8 +9,6 @@ pub enum GasError {
     OutOfGas,
 }
 
-
-
 pub struct PipelinedGasMeter {
     gas_left: u64,
     spec_id: SpecId,

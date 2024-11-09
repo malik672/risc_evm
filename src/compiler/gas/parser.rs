@@ -1,10 +1,8 @@
-use core::convert::TryFrom;
-use std::default;
-use std::ops::{Add, Mul, Sub};
-use std::{collections::HashMap, io::Read};
-use crate::compiler::memory::{stack::Stack, memory::Memory};
-use crate::MyU256 as U256;
+use crate::compiler::memory::{memory::Memory, stack::Stack};
+use crate::{MyU256 as U256, I256};
 use alloy_primitives::U256 as U;
+use core::convert::TryFrom;
+use std::ops::{Add, Mul, Sub};
 
 
 // EVM Opcode definition(CANCUN)
@@ -141,7 +139,7 @@ pub enum Opcode {
     LOG1,
     LOG2,
     LOG3,
-    LOG4,	
+    LOG4,
     PREVRANDAO,
     CREATE,
     CALL,
@@ -325,7 +323,10 @@ pub struct Instruction {
 
 impl Default for Instruction {
     fn default() -> Self {
-        Self { opcode: Opcode::STOP, operand: Default::default() }
+        Self {
+            opcode: Opcode::STOP,
+            operand: Default::default(),
+        }
     }
 }
 
@@ -343,8 +344,23 @@ pub enum IRInstruction {
         dest: U256,
         src: U256,
     },
+    TernaryOp {
+        op: &'static str,
+        dest: U256,
+        src1: U256,
+        src2: U256,
+        src3: U256,
+    },
     LoadConst {
         dest: U256,
+        value: U256,
+    },
+    MemoryLoad {
+        offset: U256,
+        dest: U256,
+    },
+    MemoryStore {
+        offset: U256,
         value: U256,
     },
     Jump {
@@ -357,6 +373,7 @@ pub enum IRInstruction {
     Call {
         target: U256,
     },
+    Stop,
     Return,
 }
 
@@ -431,7 +448,11 @@ pub fn parse_bytecode(bytecode: &[u8]) -> Result<Vec<Instruction>, &'static str>
     Ok(instructions)
 }
 
-fn parse_push_operand(bytecode: &[u8], index: &mut usize, size: usize) -> Result<Option<Vec<u8>>, &'static str> {
+fn parse_push_operand(
+    bytecode: &[u8],
+    index: &mut usize,
+    size: usize,
+) -> Result<Option<Vec<u8>>, &'static str> {
     if *index + size <= bytecode.len() {
         let operand = bytecode[*index..*index + size].to_vec();
         *index += size;
@@ -442,11 +463,19 @@ fn parse_push_operand(bytecode: &[u8], index: &mut usize, size: usize) -> Result
 }
 
 // IR Generator
-pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut Memory) -> Vec<IRInstruction> {
+pub fn generate_ir(
+    instructions: &[Instruction],
+    stack: &mut Stack,
+    memory: &mut Memory,
+) -> Vec<IRInstruction> {
     let mut ir = Vec::new();
 
     for inst in instructions {
         match inst.opcode {
+            Opcode::STOP => {
+                ir.push(IRInstruction::Stop);
+                break;
+            }
             Opcode::ADD | Opcode::SUB | Opcode::MUL | Opcode::DIV | Opcode::MOD => {
                 let op = match inst.opcode {
                     Opcode::ADD => "add",
@@ -462,8 +491,20 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
                     "add" => src1.add(src2),
                     "sub" => src1.sub(src2),
                     "mul" => src1.mul(src2),
-                    "div" => if src2 != U256::default() { src1 / src2 } else { U256::default() },
-                    "mod" => if src2 != U256::default() { src1 % src2 } else { U256::default() },
+                    "div" => {
+                        if src2 != U256::default() {
+                            src1 / src2
+                        } else {
+                            U256::default()
+                        }
+                    }
+                    "mod" => {
+                        if src2 != U256::default() {
+                            src1 % src2
+                        } else {
+                            U256::default()
+                        }
+                    }
                     _ => unreachable!(),
                 };
                 stack.push(result).expect("");
@@ -473,52 +514,202 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
                     src1: U256(U::from(stack.len())),
                     src2: U256(U::from(stack.len() + 1)),
                 });
-            },
+            }
+            Opcode::SMOD => {
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = if b.0.is_zero() {
+                    U256::default()
+                } else {
+                    let a_i256 = I256(a.0);
+                    let b_i256 = I256(b.0);
+                    let r = a_i256 % b_i256;
+                    U256(r.0)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "smod",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::ADDMOD => {
+                let n = stack.pop().expect("Stack underflow");
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = if n.0.is_zero() {
+                    U256::default()
+                } else {
+                    let sum = a.0.overflowing_add(b.0).0;
+                    U256(sum % n.0)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::TernaryOp {
+                    op: "addmod",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                    src3: U256(U::from(stack.len() + 2)),
+                });
+            }
+            Opcode::MULMOD => {
+                let n = stack.pop().expect("Stack underflow");
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = if n.0.is_zero() {
+                    U256::default()
+                } else {
+                    let product = a.0.overflowing_mul(b.0).0;
+                    U256(product % n.0)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::TernaryOp {
+                    op: "mulmod",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                    src3: U256(U::from(stack.len() + 2)),
+                });
+            }
+            Opcode::EXP => {
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let result = U256(a.0.overflowing_pow(b.0).0);
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "exp",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::SIGNEXTEND => {}
+            Opcode::LT | Opcode::GT | Opcode::SLT | Opcode::SGT | Opcode::EQ => {
+                let b = stack.pop().expect("Stack underflow");
+                let a = stack.pop().expect("Stack underflow");
+                let ops;
+                let result = match inst.opcode {
+                    Opcode::LT => {
+                        ops = "LT";
+                        U256(U::from(a.0 < b.0))
+                    }
+                    Opcode::GT => {
+                        ops = "GT";
+                        U256(U::from(a.0 > b.0))
+                    }
+                    Opcode::SLT => {
+                        ops = "SLT";
+                        let a_i256 = I256(a.0);
+                        let b_i256 = I256(b.0);
+                        U256(U::from(a_i256 < b_i256))
+                    }
+                    Opcode::SGT => {
+                        ops = "SGT";
+                        let a_i256 = I256(a.0);
+                        let b_i256 = I256(b.0);
+                        U256(U::from(a_i256 > b_i256))
+                    }
+                    Opcode::EQ => {
+                        ops = "EQ";
+                        U256(U::from(a.0 == b.0))
+                    }
+                    _ => unreachable!(),
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: ops,
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::NOT => {
+                let a = stack.pop().expect("Stack underflow");
+                let result = U256(!a.0);
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::UnaryOp {
+                    op: "not",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src: U256(U::from(stack.len())),
+                });
+            }
+
+            Opcode::BYTE => {
+                let i = stack.pop().expect("Stack underflow");
+                let x = stack.pop().expect("Stack underflow");
+                let result = if i.0 >= U::from(32) {
+                    U256::default()
+                } else {
+                    let byte = (x.0 >> (U::from(8) * (U::from(31) - i.0))) & U::from(0xFF);
+                    U256(byte)
+                };
+                stack.push(result).expect("Stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "byte",
+                    dest: U256(U::from(stack.len() - 1)),
+                    src1: U256(U::from(stack.len())),
+                    src2: U256(U::from(stack.len() + 1)),
+                });
+            }
+            Opcode::SHA3 => {
+                let offset = stack.pop().expect("Stack underflow");
+                let size = stack.pop().expect("Stack underflow");
+        
+         
+            }
             Opcode::PUSH1 => {
                 if let Some(operand) = &inst.operand {
                     let value = U256(U::from(operand[0]));
                     stack.push(value).expect("can't push to stack");
                     ir.push(IRInstruction::LoadConst {
-                        dest: U256(U::from(stack.len())),
+                        dest: U256(U::from(stack.len() - 1)),
                         value: value,
                     });
                 }
-            },
+            }
             Opcode::POP => {
                 stack.pop().expect("");
                 ir.push(IRInstruction::UnaryOp {
                     op: "pop",
                     dest: U256(U::from(0)),
-                    src: U256(U::from(stack.len())),
+                    src: U256(U::from(stack.len() + 1)),
                 });
-            },
+            }
             Opcode::JUMP => {
                 let target = stack.pop().expect("");
-                ir.push(IRInstruction::Jump {
-                    target: target,
-                });
-            },
+                ir.push(IRInstruction::Jump { target });
+            }
             Opcode::JUMPI => {
                 let condition = stack.pop().expect("");
                 let target = stack.pop().expect("");
                 ir.push(IRInstruction::ConditionalJump {
-                    condition: condition,
-                    target: target,
+                    condition,
+                    target,
                 });
-            },
+            }
             Opcode::MLOAD => {
-                if let Some(operand) = &inst.operand {
-                   let index = operand[0];
-                   let value = memory.read_word(index as usize);
-                  
-                   stack.push(U256::try_from(value).unwrap());
+                let index = stack.pop().expect("Stack underflow");
+                let value = memory.read_word(index.as_usize());
 
-                   ir.push(IRInstruction::LoadConst { dest: U256(U::from(stack.len())), value: U256::default() })
-                }
-            },
+                let _ = stack.push(U256::try_from(value).unwrap());
+
+                ir.push(IRInstruction::MemoryLoad {
+                    offset: U256(U::from(stack.len() - 1)),
+                    dest: U256::default(),
+                })
+            }
             Opcode::MSTORE => {
-               //Memory not yet implemented 
-            },
+                let offset = stack.pop().expect("Stack underflow");
+                let value = stack.pop().expect("Stack underflow");
+
+                memory.write_word(offset.as_usize(), value.to_be_bytes());
+
+                ir.push(IRInstruction::MemoryStore {
+                    offset: U256(U::from(stack.len())),
+                    value: U256::default(),
+                })
+            }
             _ => {}
         }
     }
@@ -526,82 +717,6 @@ pub fn generate_ir(instructions: &[Instruction], stack:&mut Stack, memory:&mut M
     ir
 }
 
-// // Optimizer
-// pub fn optimize_ir(ir: &[IRInstruction]) -> Vec<IRInstruction> {
-//     // This is a very basic optimizer that just removes redundant loads(complexity incomning)
-//     let mut optimized = Vec::new();
-//     let mut last_load: Option<(usize, Vec<u8>)> = None;
-
-//     for inst in ir {
-//         match inst {
-//             IRInstruction::LoadConst { dest, value } => {
-//                 if let Some((last_dest, ref last_value)) = last_load {
-//                     if *value == *last_value {
-//                         optimized.push(IRInstruction::UnaryOp {
-//                             op: "mov",
-//                             dest: *dest,
-//                             src: last_dest,
-//                         });
-//                         continue;
-//                     }
-//                 }
-//                 last_load = Some((*dest, value.clone()));
-//             }
-//             _ => last_load = None,
-//         }
-//         optimized.push(inst.clone());
-//     }
-
-//     optimized
-// }
-
-// // RISC-V Code Generator
-// pub fn generate_riscv(ir: &[IRInstruction]) -> Vec<RiscVInstruction> {
-//     let mut riscv = Vec::new();
-//     let mut label_map = HashMap::new();
-
-//     // First pass: collect jump targets
-//     for (i, inst) in ir.iter().enumerate() {
-//         if let IRInstruction::Jump { target } = inst {
-//             label_map.insert(*target, i);
-//         }
-//     }
-
-//     // Second pass: generate RISC-V instructions
-//     for (i, inst) in ir.iter().enumerate() {
-//         match inst {
-//             IRInstruction::BinaryOp {
-//                 op,
-//                 dest,
-//                 src1,
-//                 src2,
-//             } => {
-//                 match *op {
-//                     "add" => riscv.push(RiscVInstruction::ADD {
-//                         rd: *dest,
-//                         rs1: *src1,
-//                         rs2: *src2,
-//                     }),
-//                     // ... other binary operations ...
-//                     _ => {} // Placeholder for unimplemented operations
-//                 }
-//             }
-//             IRInstruction::LoadConst { dest, value } => {
-//                 let imm = i64::from_be_bytes([0, 0, 0, 0, 0, 0, value[0], value[1]]);
-//                 riscv.push(RiscVInstruction::LI { rd: *dest, imm });
-//             }
-//             IRInstruction::Jump { target } => {
-//                 if let Some(&label) = label_map.get(target) {
-//                     let offset = (label as i32 - i as i32) * 4;
-//                     riscv.push(RiscVInstruction::J { offset });
-//                 }
-//             }
-//             _ => {} // Placeholder for unimplemented instructions
-//         }
-//     }
-
-//     riscv
-// }
 
 // Runtime Support
 pub struct EVMRuntime {
@@ -640,123 +755,71 @@ impl EVMRuntime {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-//     #[test]
-//     fn test_parse_bytecode() {
-//         let bytecode = vec![0x60, 0x80, 0x60, 0x40, 0x52];
-//         let instructions = parse_bytecode(&bytecode).unwrap();
+    #[test]
+    fn test_parse_bytecode() {
+        let bytecode = vec![0x60, 0x80, 0x60, 0x40, 0x52];
+        let instructions = parse_bytecode(&bytecode).unwrap();
 
-//         assert_eq!(instructions.len(), 3);
-//         assert_eq!(instructions[0].opcode, Opcode::PUSH1);
-//         assert_eq!(instructions[0].operand, Some(vec![0x80]));
-//         assert_eq!(instructions[1].opcode, Opcode::PUSH1);
-//         assert_eq!(instructions[1].operand, Some(vec![0x40]));
-//         assert_eq!(instructions[2].opcode, Opcode::MSTORE);
-//         assert_eq!(instructions[2].operand, None);
-//     }
+        assert_eq!(instructions.len(), 3);
+        assert_eq!(instructions[0].opcode, Opcode::PUSH1);
+        assert_eq!(instructions[0].operand, Some(vec![0x80]));
+        assert_eq!(instructions[1].opcode, Opcode::PUSH1);
+        assert_eq!(instructions[1].operand, Some(vec![0x40]));
+        assert_eq!(instructions[2].opcode, Opcode::MSTORE);
+        assert_eq!(instructions[2].operand, None);
+    }
 
-//     #[test]
-//     fn test_generate_ir() {
-//         let instructions = vec![
-//             Instruction {
-//                 opcode: Opcode::PUSH1,
-//                 operand: Some(vec![0x80]),
-//             },
-//             Instruction {
-//                 opcode: Opcode::PUSH1,
-//                 operand: Some(vec![0x40]),
-//             },
-//             Instruction {
-//                 opcode: Opcode::ADD,
-//                 operand: None,
-//             },
-//         ];
+    #[test]
+    fn test_generate_ir() {
+        let instructions = vec![  
+            Instruction {
+                opcode: Opcode::PUSH1,
+                operand: Some(vec![0x80]),
+            },
+            Instruction {
+                opcode: Opcode::PUSH1,
+                operand: Some(vec![0x40]),
+            },
+            Instruction {
+                opcode: Opcode::ADD,
+                operand: None,
+            },
+        ];
 
-//         let ir = generate_ir(&instructions,    &mut Stack::new());
+        let ir = generate_ir(&instructions,    &mut Stack::new(), &mut Memory::new());
 
-//         assert_eq!(ir.len(), 3);
-//         match &ir[0] {
-//             IRInstruction::LoadConst { dest, value } => {
-//                 assert_eq!(*dest, 0);
-//                 assert_eq!(*value, vec![0x80]);
-//             }
-//             _ => panic!("Expected LoadConst"),
-//         }
-//         match &ir[1] {
-//             IRInstruction::LoadConst { dest, value } => {
-//                 assert_eq!(*dest, 1);
-//                 assert_eq!(*value, vec![0x40]);
-//             }
-//             _ => panic!("Expected LoadConst"),
-//         }
-//         match &ir[2] {
-//             IRInstruction::BinaryOp {
-//                 op,
-//                 dest,
-//                 src1,
-//                 src2,
-//             } => {
-//                 assert_eq!(*op, "add");
-//                 assert_eq!(*dest, 0);
-//                 assert_eq!(*src1, 0);
-//                 assert_eq!(*src2, 1);
-//             }
-//             _ => panic!("Expected BinaryOp"),
-//         }
-//     }
-
-//     #[test]
-//     fn test_optimize_ir() {
-//         let ir = vec![
-//             IRInstruction::LoadConst {
-//                 dest: 0,
-//                 value: vec![0x80],
-//             },
-//             IRInstruction::LoadConst {
-//                 dest: 1,
-//                 value: vec![0x80],
-//             },
-//             IRInstruction::BinaryOp {
-//                 op: "add",
-//                 dest: 2,
-//                 src1: 0,
-//                 src2: 1,
-//             },
-//         ];
-
-//         let optimized = optimize_ir(&ir);
-
-//         assert_eq!(optimized.len(), 3);
-//         match &optimized[1] {
-//             IRInstruction::UnaryOp { op, dest, src } => {
-//                 assert_eq!(*op, "mov");
-//                 assert_eq!(*dest, 1);
-//                 assert_eq!(*src, 0);
-//             }
-//             _ => panic!("Expected UnaryOp"),
-//         }
-//     }
-
-//     #[test]
-//     fn test_generate_riscv() {
-//         let ir = vec![
-//             IRInstruction::LoadConst {
-//                 dest: 0,
-//                 value: vec![0x80],
-//             },
-//             IRInstruction::LoadConst {
-//                 dest: 1,
-//                 value: vec![0x40],
-//             },
-//             IRInstruction::BinaryOp {
-//                 op: "add",
-//                 dest: 2,
-//                 src1: 0,
-//                 src2: 1,
-//             },
-//         ];
-//     }
-// }
+        assert_eq!(ir.len(), 3);
+        match &ir[0] {
+            IRInstruction::LoadConst { dest, value } => {
+                assert_eq!(*dest, U256(U::from(1)));
+                assert_eq!(*value, U256(U::from(0x80)));
+            }
+            _ => panic!("Expected LoadConst"),
+        }
+        match &ir[1] {
+            IRInstruction::LoadConst { dest, value } => {
+                assert_eq!(*dest, U256(U::from(2)));
+                assert_eq!(*value, U256(U::from(0x40)));
+            }
+            _ => panic!("Expected LoadConst"),
+        }
+        match &ir[2] {
+            IRInstruction::BinaryOp {
+                op,
+                dest,
+                src1,
+                src2,
+            } => {
+                assert_eq!(*op, "add");
+                assert_eq!(*dest, U256(U::from(1)));
+                assert_eq!(*src1, U256(U::from(2)));
+                assert_eq!(*src2, U256(U::from(1)));
+            }
+            _ => panic!("Expected BinaryOp"),
+        }
+    }
+}

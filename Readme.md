@@ -1,7 +1,5 @@
 # RISC-V EVM Emulator
 
-A low-level emulator that executes Ethereum Virtual Machine (EVM) bytecode on RISC-V architecture.
-
 ## Overview
 
 This project translates EVM bytecode into RISC-V instructions, enabling direct execution on RISC-V hardware. The translation process involves:

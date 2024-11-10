@@ -48,7 +48,7 @@ impl Register {
         }
     }
 
-    /// Check if register is callee-saved
+    /// Check if register is callee-saved 
     pub fn is_callee_saved(&self) -> bool {
         matches!(self.kind(), RegKind::Saved)
     }

@@ -4,7 +4,6 @@ use alloy_primitives::U256 as U;
 use core::convert::TryFrom;
 use std::ops::{Add, Mul, Sub};
 
-
 // EVM Opcode definition(CANCUN)
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Opcode {
@@ -399,46 +398,18 @@ pub enum RiscVInstruction {
 
 // Bytecode Parser
 pub fn parse_bytecode(bytecode: &[u8]) -> Result<Vec<Instruction>, &'static str> {
-    let mut instructions = vec![Instruction::default(); bytecode.len() / 2];
+    let mut instructions = Vec::new();
     let mut i = 0;
 
     while i < bytecode.len() {
         let opcode = Opcode::try_from(bytecode[i])?;
         i += 1;
 
-        let operand = match opcode {
-            Opcode::PUSH1 => parse_push_operand(bytecode, &mut i, 1)?,
-            Opcode::PUSH2 => parse_push_operand(bytecode, &mut i, 2)?,
-            Opcode::PUSH3 => parse_push_operand(bytecode, &mut i, 3)?,
-            Opcode::PUSH4 => parse_push_operand(bytecode, &mut i, 4)?,
-            Opcode::PUSH5 => parse_push_operand(bytecode, &mut i, 5)?,
-            Opcode::PUSH6 => parse_push_operand(bytecode, &mut i, 6)?,
-            Opcode::PUSH7 => parse_push_operand(bytecode, &mut i, 7)?,
-            Opcode::PUSH8 => parse_push_operand(bytecode, &mut i, 8)?,
-            Opcode::PUSH9 => parse_push_operand(bytecode, &mut i, 9)?,
-            Opcode::PUSH10 => parse_push_operand(bytecode, &mut i, 10)?,
-            Opcode::PUSH11 => parse_push_operand(bytecode, &mut i, 11)?,
-            Opcode::PUSH12 => parse_push_operand(bytecode, &mut i, 12)?,
-            Opcode::PUSH13 => parse_push_operand(bytecode, &mut i, 13)?,
-            Opcode::PUSH14 => parse_push_operand(bytecode, &mut i, 14)?,
-            Opcode::PUSH15 => parse_push_operand(bytecode, &mut i, 15)?,
-            Opcode::PUSH16 => parse_push_operand(bytecode, &mut i, 16)?,
-            Opcode::PUSH17 => parse_push_operand(bytecode, &mut i, 17)?,
-            Opcode::PUSH18 => parse_push_operand(bytecode, &mut i, 18)?,
-            Opcode::PUSH19 => parse_push_operand(bytecode, &mut i, 19)?,
-            Opcode::PUSH20 => parse_push_operand(bytecode, &mut i, 20)?,
-            Opcode::PUSH21 => parse_push_operand(bytecode, &mut i, 21)?,
-            Opcode::PUSH22 => parse_push_operand(bytecode, &mut i, 22)?,
-            Opcode::PUSH23 => parse_push_operand(bytecode, &mut i, 23)?,
-            Opcode::PUSH24 => parse_push_operand(bytecode, &mut i, 24)?,
-            Opcode::PUSH25 => parse_push_operand(bytecode, &mut i, 25)?,
-            Opcode::PUSH26 => parse_push_operand(bytecode, &mut i, 26)?,
-            Opcode::PUSH27 => parse_push_operand(bytecode, &mut i, 27)?,
-            Opcode::PUSH28 => parse_push_operand(bytecode, &mut i, 28)?,
-            Opcode::PUSH29 => parse_push_operand(bytecode, &mut i, 29)?,
-            Opcode::PUSH30 => parse_push_operand(bytecode, &mut i, 30)?,
-            Opcode::PUSH31 => parse_push_operand(bytecode, &mut i, 31)?,
-            Opcode::PUSH32 => parse_push_operand(bytecode, &mut i, 32)?,
+        let operand = match bytecode[i - 1] {
+            n @ 0x60..=0x7F => {
+                let size = (n - 0x60 + 1) as usize;
+                parse_push_operand(bytecode, &mut i, size)?
+            }
             _ => None,
         };
 
@@ -453,13 +424,19 @@ fn parse_push_operand(
     index: &mut usize,
     size: usize,
 ) -> Result<Option<Vec<u8>>, &'static str> {
-    if *index + size <= bytecode.len() {
-        let operand = bytecode[*index..*index + size].to_vec();
-        *index += size;
-        Ok(Some(operand))
-    } else {
-        Err("Unexpected end of bytecode")
-    }
+    ///todo: should be a feature(too performance expensive for every check), so we assume the bytecode is well formed
+    // if size == 0 || size > 32 {
+    //     return Err("Invalid PUSH size");
+    // }
+
+    // if *index + size > bytecode.len() {
+    //     return Err("Unexpected end of bytecode");
+    // }
+
+    let operand = bytecode[*index..*index + size].to_vec();
+    *index += size;
+
+    Ok(Some(operand))
 }
 
 // IR Generator
@@ -485,6 +462,9 @@ pub fn generate_ir(
                     Opcode::MOD => "mod",
                     _ => unreachable!(),
                 };
+                //capture stack length before any operation
+                let stack_pos = stack.len();
+
                 let src2 = stack.pop().expect("stack underflow");
                 let src1 = stack.pop().expect("stack underflow");
                 let result = match op {
@@ -510,7 +490,7 @@ pub fn generate_ir(
                 stack.push(result).expect("");
                 ir.push(IRInstruction::BinaryOp {
                     op,
-                    dest: U256(U::from(stack.len() - 1)),
+                    dest: U256(U::from(stack())),
                     src1: U256(U::from(stack.len())),
                     src2: U256(U::from(stack.len() + 1)),
                 });
@@ -655,8 +635,6 @@ pub fn generate_ir(
             Opcode::SHA3 => {
                 let offset = stack.pop().expect("Stack underflow");
                 let size = stack.pop().expect("Stack underflow");
-        
-         
             }
             Opcode::PUSH1 => {
                 if let Some(operand) = &inst.operand {
@@ -683,10 +661,7 @@ pub fn generate_ir(
             Opcode::JUMPI => {
                 let condition = stack.pop().expect("");
                 let target = stack.pop().expect("");
-                ir.push(IRInstruction::ConditionalJump {
-                    condition,
-                    target,
-                });
+                ir.push(IRInstruction::ConditionalJump { condition, target });
             }
             Opcode::MLOAD => {
                 let index = stack.pop().expect("Stack underflow");
@@ -716,7 +691,6 @@ pub fn generate_ir(
 
     ir
 }
-
 
 // Runtime Support
 pub struct EVMRuntime {
@@ -775,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_generate_ir() {
-        let instructions = vec![  
+        let instructions = vec![
             Instruction {
                 opcode: Opcode::PUSH1,
                 operand: Some(vec![0x80]),
@@ -790,7 +764,7 @@ mod tests {
             },
         ];
 
-        let ir = generate_ir(&instructions,    &mut Stack::new(), &mut Memory::new());
+        let ir = generate_ir(&instructions, &mut Stack::new(), &mut Memory::new());
 
         assert_eq!(ir.len(), 3);
         match &ir[0] {

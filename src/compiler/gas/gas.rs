@@ -11,6 +11,7 @@ pub enum GasError {
 
 pub struct PipelinedGasMeter {
     gas_left: u64,
+    
     spec_id: SpecId,
     pipeline_stages: usize,
     speculative_gas: Vec<u64>,

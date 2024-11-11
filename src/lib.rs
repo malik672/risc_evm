@@ -133,11 +133,11 @@ impl Rem for I256 {
     type Output = Self;
 
     fn rem(self, rhs: Self) -> Self::Output {
-        // This is a simplified version and may not handle all edge cases(so faulty)
+        //TODO
         let a = self.0;
         let b = rhs.0;
-        let r = a % b;
-        let sign = if self.is_negative() ^ rhs.is_negative() {
+        let _r = a % b;
+        let _sign = if self.is_negative() ^ rhs.is_negative() {
             -1
         } else {
             1

@@ -1,6 +1,6 @@
 #![feature(integer_sign_cast)]
 
-pub mod compiler;
+pub mod ir;
 pub mod primitives;
 
 

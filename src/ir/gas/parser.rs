@@ -630,8 +630,9 @@ pub fn generate_ir(
             }
             Opcode::SIGNEXTEND => {
                 let stack_pos = stack.len();
-                let ext = stack.pop().expect("stack underflow");
                 let val = stack.pop().expect("stack underflow");
+                let ext = stack.pop().expect("stack underflow");
+                
 
                
                 let result = if ext.0 >= U::from(32) {

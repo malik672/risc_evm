@@ -1,4 +1,4 @@
-use crate::compiler::memory::{memory::Memory, stack::Stack};
+use crate::ir::memory::{memory::Memory, stack::Stack};
 use crate::{MyU256 as U256, I256};
 use alloy_primitives::hex::ToHex;
 use alloy_primitives::U256 as U;
@@ -628,7 +628,34 @@ pub fn generate_ir(
                     src2: U256(U::from(stack_pos - 1)),
                 });
             }
-            Opcode::SIGNEXTEND => {}
+            Opcode::SIGNEXTEND => {
+                let stack_pos = stack.len();
+                let val = stack.pop().expect("stack underflow");
+                let ext = stack.pop().expect("stack underflow");
+                
+
+               
+                let result = if ext.0 >= U::from(32) {
+                    val
+                } else {
+                    let bit_pos = (ext.as_usize()  + 1) * 8 - 1;
+                    let mask = U::from(1) << bit_pos;
+                    let is_neg = (val.0 & mask) != U::from(0);
+                    let mut extended = val.0;
+                    if is_neg {
+                        let upper_mask = !((U::from(1) << (bit_pos + 1)) - U::from(1));
+                        extended |= upper_mask;
+                    }
+                    U256(extended)
+                };
+                stack.push(result).expect("stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op: "signextend",
+                    dest: U256(U::from(stack_pos - 2)),
+                    src1: U256(U::from(stack_pos - 2)),
+                    src2: U256(U::from(stack_pos - 1)),
+                });
+            }
             Opcode::LT | Opcode::GT | Opcode::SLT | Opcode::SGT | Opcode::EQ => {
                 let b = stack.pop().expect("Stack underflow");
                 let a = stack.pop().expect("Stack underflow");
@@ -684,7 +711,26 @@ pub fn generate_ir(
                     src: U256(U::from(stack_pos - 1)),
                 });
             }
-
+            Opcode::AND | Opcode::OR | Opcode::XOR => {
+                let stack_pos = stack.len();
+                let b = stack.pop().expect("stack underflow");
+                let a = stack.pop().expect("stack underflow");
+                
+                let (op, result) = match inst.opcode {
+                    Opcode::AND => ("and", U256(a.0 & b.0)),
+                    Opcode::OR => ("or", U256(a.0 | b.0)),
+                    Opcode::XOR => ("xor", U256(a.0 ^ b.0)),
+                    _ => unreachable!(),
+                };
+                
+                stack.push(result).expect("stack overflow");
+                ir.push(IRInstruction::BinaryOp {
+                    op,
+                    dest: U256(U::from(stack_pos - 2)),
+                    src1: U256(U::from(stack_pos - 2)),
+                    src2: U256(U::from(stack_pos - 1)),
+                });
+            }
             Opcode::BYTE => {
                 let i = stack.pop().expect("Stack underflow");
                 let x = stack.pop().expect("Stack underflow");
@@ -759,6 +805,64 @@ pub fn generate_ir(
                     offset: U256(U::from(stack.len())),
                     value: U256::default(),
                 })
+            }
+            Opcode::MSTORE8 => {
+                let offset = stack.pop().expect("stack underflow");
+                let value = stack.pop().expect("stack underflow");
+                memory.write_byte(offset.as_usize(), value.as_usize() as u8);
+                ir.push(IRInstruction::MemoryStore {
+                    offset,
+                    value: U256(U::from(value.as_usize() & 0xFF)),
+                });
+            }
+            Opcode::SHL | Opcode::SHR | Opcode::SAR => {
+                let stack_pos = stack.len();
+                let shift = stack.pop().expect("stack underflow");
+                let value = stack.pop().expect("stack underflow");
+                
+                let result = if shift.0 >= U::from(256) {
+                    match inst.opcode {
+                        Opcode::SAR => {
+                            if (value.0 >> 255) == U::from(1) {
+                                U256(!U::from(0))
+                            } else {
+                                U256::default()
+                            }
+                        }
+                        _ => U256::default(),
+                    }
+                } else {
+                    let shift_amt = shift.as_usize() as u32;
+                    match inst.opcode {
+                        Opcode::SHL => U256(value.0 << shift_amt),
+                        Opcode::SHR => U256(value.0 >> shift_amt),
+                        Opcode::SAR => {
+                            let is_neg = (value.0 >> 255) == U::from(1);
+                            let shifted = value.0 >> shift_amt;
+                            if is_neg {
+                                let mask = !U::from(0) << (256 - shift_amt);
+                                U256(shifted | mask)
+                            } else {
+                                U256(shifted)
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                };
+                stack.push(result).expect("stack overflow");
+                let op = match inst.opcode {
+                    Opcode::SHL => "shl",
+                    Opcode::SHR => "shr",
+                    Opcode::SAR => "sar",
+                    _ => unreachable!(),
+                };
+                
+                ir.push(IRInstruction::BinaryOp {
+                    op,
+                    dest: U256(U::from(stack_pos - 2)),
+                    src1: U256(U::from(stack_pos - 2)),
+                    src2: U256(U::from(stack_pos - 1)),
+                });
             }
             _ => {}
         }

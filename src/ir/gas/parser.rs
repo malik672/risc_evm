@@ -1,6 +1,5 @@
 use crate::ir::memory::{memory::Memory, stack::Stack};
 use crate::{MyU256 as U256, I256};
-use alloy_primitives::hex::ToHex;
 use alloy_primitives::U256 as U;
 use core::convert::TryFrom;
 use std::ops::{Add, Mul, Sub};
@@ -465,7 +464,7 @@ fn parse_push_operand(
     index: &mut usize,
     size: usize,
 ) -> Result<Option<Vec<u8>>, &'static str> {
-    ///todo: should be a feature(too performance expensive for every check), so we assume the bytecode is well formed
+    //todo: should be a feature(too performance expensive for every check), so we assume the bytecode is well formed
     // if size == 0 || size > 32 {
     //     return Err("Invalid PUSH size");
     // }
@@ -751,8 +750,9 @@ pub fn generate_ir(
                 });
             }
             Opcode::SHA3 => {
-                let offset = stack.pop().expect("Stack underflow");
-                let size = stack.pop().expect("Stack underflow");
+                let _offset = stack.pop().expect("Stack underflow");
+                let _size = stack.pop().expect("Stack underflow");
+                unimplemented!()
             }
             opcode if opcode.is_push() => {
                 if let Some(operand) = &inst.operand {
@@ -772,7 +772,7 @@ pub fn generate_ir(
                 ir.push(IRInstruction::UnaryOp {
                     op: "pop",
                     dest: U256(U::from(0)),
-                    src: U256(U::from(stack.len() + 1)),
+                    src: U256(U::from(stack_pos - 1)),
                 });
             }
             Opcode::JUMP => {

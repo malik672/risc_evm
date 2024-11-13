@@ -1,5 +1,5 @@
 /// Represents a RV64I physical register
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct Register(u8);
 
 // +---------------+-------------------------+-----------------------------------------------------------+

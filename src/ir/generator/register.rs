@@ -92,3 +92,86 @@ impl Register {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_register_creation() {
+        let reg = Register::from_raw(5);
+        assert_eq!(reg.raw(), 5);
+    }
+
+    #[test]
+    fn test_register_kinds() {
+     
+        for i in 0..=4 {
+            assert_eq!(Register::from_raw(i).kind(), RegKind::Fixed);
+        }
+
+      
+        for i in 5..=7 {
+            assert_eq!(Register::from_raw(i).kind(), RegKind::Temporary);
+        }
+        for i in 28..=31 {
+            assert_eq!(Register::from_raw(i).kind(), RegKind::Temporary);
+        }
+
+
+        for i in 8..=9 {
+            assert_eq!(Register::from_raw(i).kind(), RegKind::Saved);
+        }
+        for i in 18..=27 {
+            assert_eq!(Register::from_raw(i).kind(), RegKind::Saved);
+        }
+
+        for i in 10..=17 {
+            assert_eq!(Register::from_raw(i).kind(), RegKind::Argument);
+        }
+    }
+
+    #[test]
+    fn test_callee_saved() {
+       
+        assert!(Register::from_raw(8).is_callee_saved());
+        assert!(Register::from_raw(9).is_callee_saved());
+        for i in 18..=27 {
+            assert!(Register::from_raw(i).is_callee_saved());
+        }
+
+        // Other registers should not be callee- saved
+        assert!(!Register::from_raw(0).is_callee_saved()); 
+        assert!(!Register::from_raw(5).is_callee_saved()); 
+        assert!(!Register::from_raw(10).is_callee_saved()); 
+    }
+
+    #[test]
+    fn test_abi_names() {
+        // Test fixed registers
+        assert_eq!(Register::from_raw(0).abi_name(), "zero");
+        assert_eq!(Register::from_raw(1).abi_name(), "ra");
+        assert_eq!(Register::from_raw(2).abi_name(), "sp");
+        assert_eq!(Register::from_raw(3).abi_name(), "gp");
+        assert_eq!(Register::from_raw(4).abi_name(), "tp");
+
+        // Test some temporaries
+        assert_eq!(Register::from_raw(5).abi_name(), "t0");
+        assert_eq!(Register::from_raw(28).abi_name(), "t3");
+
+        // Test some saved registers
+        assert_eq!(Register::from_raw(8).abi_name(), "s0/fp");
+        assert_eq!(Register::from_raw(18).abi_name(), "s2");
+
+        // Test some argument registers
+        assert_eq!(Register::from_raw(10).abi_name(), "a0");
+        assert_eq!(Register::from_raw(17).abi_name(), "a7");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_register() {
+        Register::from_raw(32).kind();
+    }
+}

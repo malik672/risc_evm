@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use super::register::{RegKind, Register};
 
+
+
+#[derive(Debug)]
 pub struct RegisterAllocator {
     // maps stack positions to physical registers
     allocated: HashMap<usize, Register>,
@@ -9,12 +12,18 @@ pub struct RegisterAllocator {
     callee_saved: Vec<Register>,
 }
 
+#[derive(Debug)]
+pub struct SpillError {
+    stack_pos: usize,
+}
+
+
 impl RegisterAllocator {
     pub fn new() -> Self {
         let mut allocator = RegisterAllocator {
             allocated: HashMap::new(),
-            available_temp: Vec::new(),
-            available_saved: Vec::new(),
+            available_temp: Vec::with_capacity(7),
+            available_saved: Vec::with_capacity(10),
             callee_saved: Vec::new(),
         };
 
@@ -46,21 +55,21 @@ impl RegisterAllocator {
     /// Allocate a register for a stack position
     pub fn allocate(&mut self, stack_pos: usize) -> Register {
         // First try temporary registers
-        if let Some(reg) = self.available_temp.pop() {
-            self.allocated.insert(stack_pos, reg);
-            return reg;
-        }
-
-        // Then try saved registers
-        if let Some(reg) = self.available_saved.pop() {
-            self.callee_saved.push(reg);
-            self.allocated.insert(stack_pos, reg);
-            return reg;
-        }
-
-        // If no registers available, we need to spill
-        // For now, panic - will implement spilling later
-        panic!("No available registers - spilling needed");
+        let reg = match self.available_temp.pop() {
+            Some(reg) => reg,
+            None => match self.available_saved.pop() {
+                Some(reg) => {
+                    self.callee_saved.push(reg);
+                    reg
+                }
+                None => {
+                    panic!("can't allocate to register")
+                }
+            }
+        };
+        
+        self.allocated.insert(stack_pos, reg);
+        reg
     }
 
     /// Free a register allocated to a stack position
@@ -120,6 +129,15 @@ impl RegisterAllocator {
     /// get number of available registers
     pub fn available_count(&self) -> usize {
         self.available_temp.len() + self.available_saved.len()
+    }
+}
+
+
+impl std::error::Error for SpillError {}
+
+impl std::fmt::Display for SpillError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Register spill required for stack position {}", self.stack_pos)
     }
 }
 
